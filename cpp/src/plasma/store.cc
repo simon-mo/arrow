@@ -1077,7 +1077,8 @@ int main(int argc, char* argv[]) {
   bool hugepages_enabled = false;
   int64_t system_memory = -1;
   int c;
-  while ((c = getopt(argc, argv, "s:m:d:e:h")) != -1) {
+  float eviction_fraction = 0.2;
+  while ((c = getopt(argc, argv, "s:m:d:e:h:f:")) != -1) {
     switch (c) {
       case 'd':
         plasma_directory = std::string(optarg);
@@ -1091,6 +1092,16 @@ int main(int argc, char* argv[]) {
       case 's':
         socket_name = optarg;
         break;
+      case 'f': {
+        int scanned = sscanf(optarg, "%f", &eviction_fraction);
+        ARROW_CHECK(scanned == 1);
+        // Set system memory capacity
+        plasma::PlasmaAllocator::SetEvictionFraction(eviction_fraction_);
+        ARROW_LOG(INFO) << "Setting Plasma Eviction Policy to use "
+                        << eviction_fraction_
+                        << "of the memory.";
+        break;
+      }
       case 'm': {
         char extra;
         int scanned = sscanf(optarg, "%" SCNd64 "%c", &system_memory, &extra);

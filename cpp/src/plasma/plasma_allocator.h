@@ -54,9 +54,16 @@ class PlasmaAllocator {
   /// \return Number of bytes allocated by Plasma so far.
   static int64_t Allocated();
 
+  /// Set the fraction for eviction each time
+  static void SetEvictionFraction(float frac);
+
+  /// Get the fraction for eviction each time
+  static float GetEvictionFraction();
+
  private:
   static int64_t allocated_;
   static int64_t footprint_limit_;
+  static float eviction_fraction_;
 };
 
 }  // namespace plasma

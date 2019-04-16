@@ -49,6 +49,12 @@ void PlasmaAllocator::SetFootprintLimit(size_t bytes) {
   footprint_limit_ = static_cast<int64_t>(bytes);
 }
 
+void PlasmaAllocator::SetEvictionFraction(float frac) {
+  eviction_fraction_ = frac;
+}
+
+float PlasmaAllocator::GetEvictionFraction() {return eviction_fraction_; }
+
 int64_t PlasmaAllocator::GetFootprintLimit() { return footprint_limit_; }
 
 int64_t PlasmaAllocator::Allocated() { return allocated_; }
