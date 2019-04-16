@@ -1098,7 +1098,7 @@ int main(int argc, char* argv[]) {
         // Set system memory capacity
         plasma::PlasmaAllocator::SetEvictionFraction(eviction_fraction);
         ARROW_LOG(INFO) << "Setting Plasma Eviction Policy to use "
-                        << eviction_fraction_
+                        << eviction_fraction
                         << "of the memory.";
         break;
       }
