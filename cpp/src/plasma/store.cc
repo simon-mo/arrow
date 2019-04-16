@@ -1078,7 +1078,7 @@ int main(int argc, char* argv[]) {
   int64_t system_memory = -1;
   int c;
   float eviction_fraction = 0.2;
-  while ((c = getopt(argc, argv, "s:m:d:e:h:f:")) != -1) {
+  while ((c = getopt(argc, argv, "s:m:d:e:f:h")) != -1) {
     switch (c) {
       case 'd':
         plasma_directory = std::string(optarg);
