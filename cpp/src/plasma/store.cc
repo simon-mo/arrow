@@ -1096,7 +1096,7 @@ int main(int argc, char* argv[]) {
         int scanned = sscanf(optarg, "%f", &eviction_fraction);
         ARROW_CHECK(scanned == 1);
         // Set system memory capacity
-        plasma::PlasmaAllocator::SetEvictionFraction(eviction_fraction_);
+        plasma::PlasmaAllocator::SetEvictionFraction(eviction_fraction);
         ARROW_LOG(INFO) << "Setting Plasma Eviction Policy to use "
                         << eviction_fraction_
                         << "of the memory.";
