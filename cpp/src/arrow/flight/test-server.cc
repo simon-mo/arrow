@@ -30,6 +30,7 @@
 #include "arrow/util/logging.h"
 
 #include "arrow/flight/server.h"
+#include "arrow/flight/server_auth.h"
 #include "arrow/flight/test-util.h"
 
 DEFINE_int32(port, 31337, "Server port to listen on");
@@ -38,9 +39,14 @@ namespace arrow {
 namespace flight {
 
 Status GetBatchForFlight(const Ticket& ticket, std::shared_ptr<RecordBatchReader>* out) {
-  if (ticket.ticket == "ticket-id-1") {
+  if (ticket.ticket == "ticket-ints-1") {
     BatchVector batches;
-    RETURN_NOT_OK(SimpleIntegerBatches(5, &batches));
+    RETURN_NOT_OK(ExampleIntBatches(&batches));
+    *out = std::make_shared<BatchIterator>(batches[0]->schema(), batches);
+    return Status::OK();
+  } else if (ticket.ticket == "ticket-dicts-1") {
+    BatchVector batches;
+    RETURN_NOT_OK(ExampleDictBatches(&batches));
     *out = std::make_shared<BatchIterator>(batches[0]->schema(), batches);
     return Status::OK();
   } else {
@@ -49,32 +55,36 @@ Status GetBatchForFlight(const Ticket& ticket, std::shared_ptr<RecordBatchReader
 }
 
 class FlightTestServer : public FlightServerBase {
-  Status ListFlights(const Criteria* criteria,
+  Status ListFlights(const ServerCallContext& context, const Criteria* criteria,
                      std::unique_ptr<FlightListing>* listings) override {
     std::vector<FlightInfo> flights = ExampleFlightInfo();
     *listings = std::unique_ptr<FlightListing>(new SimpleFlightListing(flights));
     return Status::OK();
   }
 
-  Status GetFlightInfo(const FlightDescriptor& request,
-                       std::unique_ptr<FlightInfo>* info) override {
+  Status GetFlightInfo(const ServerCallContext& context, const FlightDescriptor& request,
+                       std::unique_ptr<FlightInfo>* out) override {
     std::vector<FlightInfo> flights = ExampleFlightInfo();
 
-    const FlightInfo* value;
-
-    // We only have one kind of flight for each descriptor type
-    if (request.type == FlightDescriptor::PATH) {
-      value = &flights[0];
-    } else {
-      value = &flights[1];
+    for (const auto& info : flights) {
+      if (info.descriptor().Equals(request)) {
+        *out = std::unique_ptr<FlightInfo>(new FlightInfo(info));
+        return Status::OK();
+      }
     }
-
-    *info = std::unique_ptr<FlightInfo>(new FlightInfo(*value));
-    return Status::OK();
+    return Status::Invalid("Flight not found: ", request.ToString());
   }
 
-  Status DoGet(const Ticket& request,
+  Status DoGet(const ServerCallContext& context, const Ticket& request,
                std::unique_ptr<FlightDataStream>* data_stream) override {
+    // Test for ARROW-5095
+    if (request.ticket == "ARROW-5095-fail") {
+      return Status::UnknownError("Server-side error");
+    }
+    if (request.ticket == "ARROW-5095-success") {
+      return Status::OK();
+    }
+
     std::shared_ptr<RecordBatchReader> batch_reader;
     RETURN_NOT_OK(GetBatchForFlight(request, &batch_reader));
 
@@ -100,7 +110,8 @@ class FlightTestServer : public FlightServerBase {
     return Status::OK();
   }
 
-  Status DoAction(const Action& action, std::unique_ptr<ResultStream>* out) override {
+  Status DoAction(const ServerCallContext& context, const Action& action,
+                  std::unique_ptr<ResultStream>* out) override {
     if (action.type == "action1") {
       return RunAction1(action, out);
     } else if (action.type == "action2") {
@@ -110,7 +121,8 @@ class FlightTestServer : public FlightServerBase {
     }
   }
 
-  Status ListActions(std::vector<ActionType>* out) override {
+  Status ListActions(const ServerCallContext& context,
+                     std::vector<ActionType>* out) override {
     std::vector<ActionType> actions = ExampleActionTypes();
     *out = std::move(actions);
     return Status::OK();
@@ -126,7 +138,8 @@ int main(int argc, char** argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   g_server.reset(new arrow::flight::FlightTestServer);
-  ARROW_CHECK_OK(g_server->Init(FLAGS_port));
+  ARROW_CHECK_OK(
+      g_server->Init(std::unique_ptr<arrow::flight::NoOpAuthHandler>(), FLAGS_port));
   // Exit with a clean error code (0) on SIGTERM
   ARROW_CHECK_OK(g_server->SetShutdownOnSignals({SIGTERM}));
 

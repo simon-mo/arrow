@@ -253,6 +253,8 @@ cdef wrap_datum(const CDatum& datum):
         return pyarrow_wrap_array(MakeArray(datum.array()))
     elif datum.kind() == DatumType_CHUNKED_ARRAY:
         return pyarrow_wrap_chunked_array(datum.chunked_array())
+    elif datum.kind() == DatumType_SCALAR:
+        return pyarrow_wrap_scalar(datum.scalar())
     else:
         raise ValueError("Unable to wrap Datum in a Python object")
 
@@ -469,6 +471,17 @@ cdef class Array(_PandasConvertible):
                               options, &result))
 
         return pyarrow_wrap_array(result)
+
+    def sum(self):
+        """
+        Sum the values in a numerical array.
+        """
+        cdef CDatum out
+
+        with nogil:
+            check_status(Sum(_context(), CDatum(self.sp_array), &out))
+
+        return wrap_datum(out)
 
     def unique(self):
         """
@@ -1041,7 +1054,8 @@ cdef class UnionArray(Array):
     """
 
     @staticmethod
-    def from_dense(Array types, Array value_offsets, list children):
+    def from_dense(Array types, Array value_offsets, list children,
+                   list field_names=None, list type_codes=None):
         """
         Construct dense UnionArray from arrays of int8 types, int32 offsets and
         children arrays
@@ -1051,6 +1065,8 @@ cdef class UnionArray(Array):
         types : Array (int8 type)
         value_offsets : Array (int32 type)
         children : list
+        field_names : list
+        type_codes : list
 
         Returns
         -------
@@ -1059,15 +1075,25 @@ cdef class UnionArray(Array):
         cdef shared_ptr[CArray] out
         cdef vector[shared_ptr[CArray]] c
         cdef Array child
+        cdef vector[c_string] c_field_names
+        cdef vector[uint8_t] c_type_codes
         for child in children:
             c.push_back(child.sp_array)
+        if field_names is not None:
+            for x in field_names:
+                c_field_names.push_back(tobytes(x))
+        if type_codes is not None:
+            for x in type_codes:
+                c_type_codes.push_back(x)
         with nogil:
             check_status(CUnionArray.MakeDense(
-                deref(types.ap), deref(value_offsets.ap), c, &out))
+                deref(types.ap), deref(value_offsets.ap), c, c_field_names,
+                c_type_codes, &out))
         return pyarrow_wrap_array(out)
 
     @staticmethod
-    def from_sparse(Array types, list children):
+    def from_sparse(Array types, list children, list field_names=None,
+                    list type_codes=None):
         """
         Construct sparse UnionArray from arrays of int8 types and children
         arrays
@@ -1076,6 +1102,8 @@ cdef class UnionArray(Array):
         ----------
         types : Array (int8 type)
         children : list
+        field_names : list
+        type_codes : list
 
         Returns
         -------
@@ -1084,10 +1112,21 @@ cdef class UnionArray(Array):
         cdef shared_ptr[CArray] out
         cdef vector[shared_ptr[CArray]] c
         cdef Array child
+        cdef vector[c_string] c_field_names
+        cdef vector[uint8_t] c_type_codes
         for child in children:
             c.push_back(child.sp_array)
+        if field_names is not None:
+            for x in field_names:
+                c_field_names.push_back(tobytes(x))
+        if type_codes is not None:
+            for x in type_codes:
+                c_type_codes.push_back(x)
         with nogil:
-            check_status(CUnionArray.MakeSparse(deref(types.ap), c, &out))
+            check_status(CUnionArray.MakeSparse(deref(types.ap), c,
+                                                c_field_names,
+                                                c_type_codes,
+                                                &out))
         return pyarrow_wrap_array(out)
 
 

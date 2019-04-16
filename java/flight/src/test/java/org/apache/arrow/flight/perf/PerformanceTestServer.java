@@ -36,7 +36,6 @@ import org.apache.arrow.flight.Location;
 import org.apache.arrow.flight.Result;
 import org.apache.arrow.flight.Ticket;
 import org.apache.arrow.flight.auth.ServerAuthHandler;
-import org.apache.arrow.flight.example.ExampleFlightServer;
 import org.apache.arrow.flight.impl.Flight.PutResult;
 import org.apache.arrow.flight.perf.impl.PerfOuterClass.Perf;
 import org.apache.arrow.flight.perf.impl.PerfOuterClass.Token;
@@ -54,7 +53,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 
 public class PerformanceTestServer implements AutoCloseable {
 
-  private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(ExampleFlightServer.class);
+  private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(PerformanceTestServer.class);
 
   private final FlightServer flightServer;
   private final Location location;
@@ -84,7 +83,8 @@ public class PerformanceTestServer implements AutoCloseable {
   private final class PerfProducer implements FlightProducer {
 
     @Override
-    public void getStream(Ticket ticket, ServerStreamListener listener) {
+    public void getStream(CallContext context, Ticket ticket,
+        ServerStreamListener listener) {
       VectorSchemaRoot root = null;
       try {
         Token token = Token.parseFrom(ticket.getBytes());
@@ -147,11 +147,13 @@ public class PerformanceTestServer implements AutoCloseable {
     }
 
     @Override
-    public void listFlights(Criteria criteria, StreamListener<FlightInfo> listener) {
+    public void listFlights(CallContext context, Criteria criteria,
+        StreamListener<FlightInfo> listener) {
     }
 
     @Override
-    public FlightInfo getFlightInfo(FlightDescriptor descriptor) {
+    public FlightInfo getFlightInfo(CallContext context,
+        FlightDescriptor descriptor) {
       try {
         Preconditions.checkArgument(descriptor.isCommand());
         Perf exec = Perf.parseFrom(descriptor.getCommand());
@@ -182,17 +184,19 @@ public class PerformanceTestServer implements AutoCloseable {
     }
 
     @Override
-    public Callable<PutResult> acceptPut(FlightStream flightStream) {
+    public Callable<PutResult> acceptPut(CallContext context,
+        FlightStream flightStream) {
       return null;
     }
 
     @Override
-    public Result doAction(Action action) {
+    public Result doAction(CallContext context, Action action) {
       return null;
     }
 
     @Override
-    public void listActions(StreamListener<ActionType> listener) {
+    public void listActions(CallContext context,
+        StreamListener<ActionType> listener) {
     }
 
   }

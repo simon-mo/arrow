@@ -140,6 +140,9 @@ if("${COMPILER_FAMILY}" STREQUAL "clang")
                PROPERTY COMPILE_FLAGS " -Wno-unused-macros ")
 endif()
 
+# Unconditionally install testing headers that are also useful for Arrow consumers.
+add_subdirectory(testing)
+
 if(ARROW_COMPUTE)
   add_subdirectory(compute)
   set(ARROW_SRCS
@@ -151,10 +154,13 @@ if(ARROW_COMPUTE)
       compute/kernels/aggregate.cc
       compute/kernels/boolean.cc
       compute/kernels/cast.cc
+      compute/kernels/compare.cc
       compute/kernels/count.cc
+      compute/kernels/filter.cc
       compute/kernels/hash.cc
       compute/kernels/mean.cc
       compute/kernels/sum.cc
+      compute/kernels/take.cc
       compute/kernels/util-internal.cc
       compute/operations/cast.cc
       compute/operations/literal.cc)
@@ -202,7 +208,7 @@ endif()
 
 if(ARROW_ORC)
   add_subdirectory(adapters/orc)
-  set(ARROW_SRCS adapters/orc/adapter.cc ${ARROW_SRCS})
+  set(ARROW_SRCS adapters/orc/adapter.cc adapters/orc/adapter_util.cc ${ARROW_SRCS})
 endif()
 
 if(ARROW_TENSORFLOW)
@@ -271,6 +277,7 @@ if(ARROW_BUILD_TESTS OR ARROW_BUILD_BENCHMARKS)
   # that depend on gtest
   add_arrow_lib(arrow_testing
                 SOURCES
+                ipc/test-common.cc
                 testing/gtest_util.cc
                 testing/random.cc
                 OUTPUTS
@@ -317,7 +324,8 @@ if(WIN32)
                  array-test.cc
                  array-binary-test.cc
                  array-list-test.cc
-                 array-struct-test.cc)
+                 array-struct-test.cc
+                 array-union-test.cc)
 else()
   add_arrow_test(array-test
                  SOURCES
@@ -325,7 +333,8 @@ else()
                  array-binary-test.cc
                  array-dict-test.cc
                  array-list-test.cc
-                 array-struct-test.cc)
+                 array-struct-test.cc
+                 array-union-test.cc)
 endif()
 
 add_arrow_test(buffer-test)

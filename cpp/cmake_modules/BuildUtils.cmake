@@ -15,6 +15,20 @@
 # specific language governing permissions and limitations
 # under the License.
 
+# Common path suffixes to be searched by find_library or find_path.
+# Windows artifacts may be found under "<root>/Library", so
+# search there as well.
+set(LIB_PATH_SUFFIXES
+    "${CMAKE_LIBRARY_ARCHITECTURE}"
+    "lib64"
+    "lib32"
+    "lib"
+    "bin"
+    "Library"
+    "Library/lib"
+    "Library/bin")
+set(INCLUDE_PATH_SUFFIXES "include" "Library" "Library/include")
+
 function(ADD_THIRDPARTY_LIB LIB_NAME)
   set(options)
   set(one_value_args SHARED_LIB STATIC_LIB)
@@ -151,9 +165,9 @@ function(ADD_ARROW_LIB LIB_NAME)
     set(BUILD_STATIC ${ARROW_BUILD_STATIC})
   endif()
 
-  if(MSVC OR (CMAKE_GENERATOR STREQUAL Xcode))
-    # MSVC needs to compile C++ separately for each library kind (shared and static)
-    # because of dllexport declarations
+  if(WIN32 OR (CMAKE_GENERATOR STREQUAL Xcode))
+    # We need to compile C++ separately for each library kind (shared and static)
+    # because of dllexport declarations on Windows.
     # The Xcode generator doesn't reliably work with Xcode as target names are not
     # guessed correctly.
     set(LIB_DEPS ${ARG_SOURCES})

@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "arrow/buffer.h"
+#include "arrow/compare.h"
 #include "arrow/type.h"
 #include "arrow/type_traits.h"
 #include "arrow/util/bit-util.h"
@@ -272,19 +273,29 @@ class ARROW_EXPORT Array {
   /// This buffer does not account for any slice offset
   const uint8_t* null_bitmap_data() const { return null_bitmap_data_; }
 
-  bool Equals(const Array& arr) const;
-  bool Equals(const std::shared_ptr<Array>& arr) const;
+  /// Equality comparison with another array
+  bool Equals(const Array& arr, const EqualOptions& = EqualOptions::Defaults()) const;
+  bool Equals(const std::shared_ptr<Array>& arr,
+              const EqualOptions& = EqualOptions::Defaults()) const;
 
-  bool ApproxEquals(const std::shared_ptr<Array>& arr) const;
-  bool ApproxEquals(const Array& arr) const;
+  /// Approximate equality comparison with another array
+  ///
+  /// epsilon is only used if this is FloatArray or DoubleArray
+  bool ApproxEquals(const std::shared_ptr<Array>& arr,
+                    const EqualOptions& = EqualOptions::Defaults()) const;
+  bool ApproxEquals(const Array& arr,
+                    const EqualOptions& = EqualOptions::Defaults()) const;
 
   /// Compare if the range of slots specified are equal for the given array and
   /// this array.  end_idx exclusive.  This methods does not bounds check.
   bool RangeEquals(int64_t start_idx, int64_t end_idx, int64_t other_start_idx,
+                   const Array& other) const;
+  bool RangeEquals(int64_t start_idx, int64_t end_idx, int64_t other_start_idx,
                    const std::shared_ptr<Array>& other) const;
-
   bool RangeEquals(const Array& other, int64_t start_idx, int64_t end_idx,
                    int64_t other_start_idx) const;
+  bool RangeEquals(const std::shared_ptr<Array>& other, int64_t start_idx,
+                   int64_t end_idx, int64_t other_start_idx) const;
 
   Status Accept(ArrayVisitor* visitor) const;
 
@@ -723,10 +734,74 @@ class ARROW_EXPORT UnionArray : public Array {
   /// relative offset into the respective child array for the type in a given slot.
   /// The respective offsets for each child value array must be in order / increasing.
   /// \param[in] children Vector of children Arrays containing the data for each type.
+  /// \param[in] field_names Vector of strings containing the name of each field.
+  /// \param[in] type_codes Vector of type codes.
   /// \param[out] out Will have length equal to value_offsets.length()
   static Status MakeDense(const Array& type_ids, const Array& value_offsets,
                           const std::vector<std::shared_ptr<Array>>& children,
+                          const std::vector<std::string>& field_names,
+                          const std::vector<uint8_t>& type_codes,
                           std::shared_ptr<Array>* out);
+
+  /// \brief Construct Dense UnionArray from types_ids, value_offsets and children
+  ///
+  /// This function does the bare minimum of validation of the offsets and
+  /// input types. The value_offsets are assumed to be well-formed.
+  ///
+  /// \param[in] type_ids An array of 8-bit signed integers, enumerated from
+  /// 0 corresponding to each type.
+  /// \param[in] value_offsets An array of signed int32 values indicating the
+  /// relative offset into the respective child array for the type in a given slot.
+  /// The respective offsets for each child value array must be in order / increasing.
+  /// \param[in] children Vector of children Arrays containing the data for each type.
+  /// \param[in] field_names Vector of strings containing the name of each field.
+  /// \param[out] out Will have length equal to value_offsets.length()
+  static Status MakeDense(const Array& type_ids, const Array& value_offsets,
+                          const std::vector<std::shared_ptr<Array>>& children,
+                          const std::vector<std::string>& field_names,
+                          std::shared_ptr<Array>* out) {
+    return MakeDense(type_ids, value_offsets, children, field_names, {}, out);
+  }
+
+  /// \brief Construct Dense UnionArray from types_ids, value_offsets and children
+  ///
+  /// This function does the bare minimum of validation of the offsets and
+  /// input types. The value_offsets are assumed to be well-formed.
+  ///
+  /// \param[in] type_ids An array of 8-bit signed integers, enumerated from
+  /// 0 corresponding to each type.
+  /// \param[in] value_offsets An array of signed int32 values indicating the
+  /// relative offset into the respective child array for the type in a given slot.
+  /// The respective offsets for each child value array must be in order / increasing.
+  /// \param[in] children Vector of children Arrays containing the data for each type.
+  /// \param[in] type_codes Vector of type codes.
+  /// \param[out] out Will have length equal to value_offsets.length()
+  static Status MakeDense(const Array& type_ids, const Array& value_offsets,
+                          const std::vector<std::shared_ptr<Array>>& children,
+                          const std::vector<uint8_t>& type_codes,
+                          std::shared_ptr<Array>* out) {
+    return MakeDense(type_ids, value_offsets, children, {}, type_codes, out);
+  }
+
+  /// \brief Construct Dense UnionArray from types_ids, value_offsets and children
+  ///
+  /// This function does the bare minimum of validation of the offsets and
+  /// input types. The value_offsets are assumed to be well-formed.
+  ///
+  /// The name of each field is filled by the index of the field.
+  ///
+  /// \param[in] type_ids An array of 8-bit signed integers, enumerated from
+  /// 0 corresponding to each type.
+  /// \param[in] value_offsets An array of signed int32 values indicating the
+  /// relative offset into the respective child array for the type in a given slot.
+  /// The respective offsets for each child value array must be in order / increasing.
+  /// \param[in] children Vector of children Arrays containing the data for each type.
+  /// \param[out] out Will have length equal to value_offsets.length()
+  static Status MakeDense(const Array& type_ids, const Array& value_offsets,
+                          const std::vector<std::shared_ptr<Array>>& children,
+                          std::shared_ptr<Array>* out) {
+    return MakeDense(type_ids, value_offsets, children, {}, {}, out);
+  }
 
   /// \brief Construct Sparse UnionArray from type_ids and children
   ///
@@ -736,10 +811,65 @@ class ARROW_EXPORT UnionArray : public Array {
   /// \param[in] type_ids An array of 8-bit signed integers, enumerated from
   /// 0 corresponding to each type.
   /// \param[in] children Vector of children Arrays containing the data for each type.
+  /// \param[in] field_names Vector of strings containing the name of each field.
+  /// \param[in] type_codes Vector of type codes.
   /// \param[out] out Will have length equal to type_ids.length()
   static Status MakeSparse(const Array& type_ids,
                            const std::vector<std::shared_ptr<Array>>& children,
+                           const std::vector<std::string>& field_names,
+                           const std::vector<uint8_t>& type_codes,
                            std::shared_ptr<Array>* out);
+
+  /// \brief Construct Sparse UnionArray from type_ids and children
+  ///
+  /// This function does the bare minimum of validation of the offsets and
+  /// input types.
+  ///
+  /// \param[in] type_ids An array of 8-bit signed integers, enumerated from
+  /// 0 corresponding to each type.
+  /// \param[in] children Vector of children Arrays containing the data for each type.
+  /// \param[in] field_names Vector of strings containing the name of each field.
+  /// \param[out] out Will have length equal to type_ids.length()
+  static Status MakeSparse(const Array& type_ids,
+                           const std::vector<std::shared_ptr<Array>>& children,
+                           const std::vector<std::string>& field_names,
+                           std::shared_ptr<Array>* out) {
+    return MakeSparse(type_ids, children, field_names, {}, out);
+  }
+
+  /// \brief Construct Sparse UnionArray from type_ids and children
+  ///
+  /// This function does the bare minimum of validation of the offsets and
+  /// input types.
+  ///
+  /// \param[in] type_ids An array of 8-bit signed integers, enumerated from
+  /// 0 corresponding to each type.
+  /// \param[in] children Vector of children Arrays containing the data for each type.
+  /// \param[in] type_codes Vector of type codes.
+  /// \param[out] out Will have length equal to type_ids.length()
+  static Status MakeSparse(const Array& type_ids,
+                           const std::vector<std::shared_ptr<Array>>& children,
+                           const std::vector<uint8_t>& type_codes,
+                           std::shared_ptr<Array>* out) {
+    return MakeSparse(type_ids, children, {}, type_codes, out);
+  }
+
+  /// \brief Construct Sparse UnionArray from type_ids and children
+  ///
+  /// This function does the bare minimum of validation of the offsets and
+  /// input types.
+  ///
+  /// The name of each field is filled by the index of the field.
+  ///
+  /// \param[in] type_ids An array of 8-bit signed integers, enumerated from
+  /// 0 corresponding to each type.
+  /// \param[in] children Vector of children Arrays containing the data for each type.
+  /// \param[out] out Will have length equal to type_ids.length()
+  static Status MakeSparse(const Array& type_ids,
+                           const std::vector<std::shared_ptr<Array>>& children,
+                           std::shared_ptr<Array>* out) {
+    return MakeSparse(type_ids, children, {}, {}, out);
+  }
 
   /// Note that this buffer does not account for any slice offset
   std::shared_ptr<Buffer> type_ids() const { return data_->buffers[1]; }

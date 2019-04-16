@@ -31,7 +31,9 @@ use sqlparser::sqlast::*;
 /// The SchemaProvider trait allows the query planner to obtain meta-data about tables and
 /// functions referenced in SQL statements
 pub trait SchemaProvider {
+    /// Getter for a field description
     fn get_table_meta(&self, name: &str) -> Option<Arc<Schema>>;
+    /// Getter for a UDF description
     fn get_function_meta(&self, name: &str) -> Option<Arc<FunctionMeta>>;
 }
 
@@ -313,12 +315,12 @@ impl SqlToRel {
                         let rex_args = args
                             .iter()
                             .map(|a| match a {
-                                // this feels hacky but translate COUNT(1)/COUNT(*) to
-                                // COUNT(first_column)
-                                ASTNode::SQLValue(sqlparser::sqlast::Value::Long(1)) => {
-                                    Ok(Expr::Column(0))
+                                ASTNode::SQLValue(sqlparser::sqlast::Value::Long(_)) => {
+                                    Ok(Expr::Literal(ScalarValue::UInt8(1)))
                                 }
-                                ASTNode::SQLWildcard => Ok(Expr::Column(0)),
+                                ASTNode::SQLWildcard => {
+                                    Ok(Expr::Literal(ScalarValue::UInt8(1)))
+                                },
                                 _ => self.sql_to_rex(a, schema),
                             })
                             .collect::<Result<Vec<Expr>>>()?;
@@ -480,6 +482,14 @@ mod tests {
     #[test]
     fn select_count_one() {
         let sql = "SELECT COUNT(1) FROM person";
+        let expected = "Aggregate: groupBy=[[]], aggr=[[COUNT(UInt8(1))]]\
+                        \n  TableScan: person projection=None";
+        quick_test(sql, expected);
+    }
+
+    #[test]
+    fn select_count_column() {
+        let sql = "SELECT COUNT(id) FROM person";
         let expected = "Aggregate: groupBy=[[]], aggr=[[COUNT(#0)]]\
                         \n  TableScan: person projection=None";
         quick_test(sql, expected);

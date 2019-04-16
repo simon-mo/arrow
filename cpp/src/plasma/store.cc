@@ -1184,6 +1184,7 @@ int main(int argc, char* argv[]) {
   plasma::g_runner->Shutdown();
   plasma::g_runner = nullptr;
 
+  ArrowLog::UninstallSignalAction();
   ArrowLog::ShutDownArrowLog();
   return 0;
 }

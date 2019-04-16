@@ -25,8 +25,10 @@ use std::sync::Arc;
 
 use arrow::datatypes::*;
 
+use crate::arrow::array::ArrayRef;
+use crate::arrow::builder::BooleanBuilder;
 use crate::datasource::csv::CsvFile;
-use crate::datasource::datasource::Table;
+use crate::datasource::TableProvider;
 use crate::error::{ExecutionError, Result};
 use crate::execution::aggregate::AggregateRelation;
 use crate::execution::expression::*;
@@ -34,21 +36,26 @@ use crate::execution::filter::FilterRelation;
 use crate::execution::limit::LimitRelation;
 use crate::execution::projection::ProjectRelation;
 use crate::execution::relation::{DataSourceRelation, Relation};
+use crate::execution::scalar_relation::ScalarRelation;
+use crate::execution::table_impl::TableImpl;
 use crate::logicalplan::*;
 use crate::optimizer::optimizer::OptimizerRule;
 use crate::optimizer::projection_push_down::ProjectionPushDown;
 use crate::optimizer::type_coercion::TypeCoercionRule;
 use crate::optimizer::utils;
+use crate::sql::parser::FileType;
 use crate::sql::parser::{DFASTNode, DFParser};
 use crate::sql::planner::{SchemaProvider, SqlToRel};
+use crate::table::Table;
+use sqlparser::sqlast::{SQLColumnDef, SQLType};
 
 /// Execution context for registering data sources and executing queries
 pub struct ExecutionContext {
-    datasources: Rc<RefCell<HashMap<String, Rc<Table>>>>,
+    datasources: Rc<RefCell<HashMap<String, Rc<TableProvider>>>>,
 }
 
 impl ExecutionContext {
-    /// Create a new excution context for in-memory queries
+    /// Create a new execution context for in-memory queries
     pub fn new() -> Self {
         Self {
             datasources: Rc::new(RefCell::new(HashMap::new())),
@@ -81,9 +88,61 @@ impl ExecutionContext {
 
                 Ok(self.optimize(&plan)?)
             }
-            other => Err(ExecutionError::General(format!(
-                "Cannot create logical plan from {:?}",
-                other
+            DFASTNode::CreateExternalTable {
+                name,
+                columns,
+                file_type,
+                header_row,
+                location,
+            } => {
+                let schema = Arc::new(self.build_schema(columns)?);
+
+                Ok(Arc::new(LogicalPlan::CreateExternalTable {
+                    schema,
+                    name,
+                    location,
+                    file_type,
+                    header_row,
+                }))
+            }
+        }
+    }
+
+    fn build_schema(&self, columns: Vec<SQLColumnDef>) -> Result<Schema> {
+        let mut fields = Vec::new();
+
+        for column in columns {
+            let data_type = self.make_data_type(column.data_type)?;
+            fields.push(Field::new(&column.name, data_type, column.allow_null));
+        }
+
+        Ok(Schema::new(fields))
+    }
+
+    fn make_data_type(&self, sql_type: SQLType) -> Result<DataType> {
+        match sql_type {
+            SQLType::BigInt => Ok(DataType::Int64),
+            SQLType::Int => Ok(DataType::Int32),
+            SQLType::SmallInt => Ok(DataType::Int16),
+            SQLType::Char(_) | SQLType::Varchar(_) | SQLType::Text => Ok(DataType::Utf8),
+            SQLType::Decimal(_, _) => Ok(DataType::Float64),
+            SQLType::Float(_) => Ok(DataType::Float32),
+            SQLType::Real | SQLType::Double => Ok(DataType::Float64),
+            SQLType::Boolean => Ok(DataType::Boolean),
+            SQLType::Date => Ok(DataType::Date64(DateUnit::Day)),
+            SQLType::Time => Ok(DataType::Time64(TimeUnit::Millisecond)),
+            SQLType::Timestamp => Ok(DataType::Date64(DateUnit::Millisecond)),
+            SQLType::Uuid
+            | SQLType::Clob(_)
+            | SQLType::Binary(_)
+            | SQLType::Varbinary(_)
+            | SQLType::Blob(_)
+            | SQLType::Regclass
+            | SQLType::Bytea
+            | SQLType::Custom(_)
+            | SQLType::Array(_) => Err(ExecutionError::General(format!(
+                "Unsupported data type: {:?}.",
+                sql_type
             ))),
         }
     }
@@ -100,14 +159,32 @@ impl ExecutionContext {
     }
 
     /// Register a table so that it can be queried from SQL
-    pub fn register_table(&mut self, name: &str, provider: Rc<Table>) {
+    pub fn register_table(&mut self, name: &str, provider: Rc<TableProvider>) {
         self.datasources
             .borrow_mut()
             .insert(name.to_string(), provider);
     }
 
+    /// Get a table by name
+    pub fn table(&mut self, table_name: &str) -> Result<Arc<Table>> {
+        match (*self.datasources).borrow().get(table_name) {
+            Some(provider) => {
+                Ok(Arc::new(TableImpl::new(Arc::new(LogicalPlan::TableScan {
+                    schema_name: "".to_string(),
+                    table_name: table_name.to_string(),
+                    schema: provider.schema().clone(),
+                    projection: None,
+                }))))
+            }
+            _ => Err(ExecutionError::General(format!(
+                "No table named '{}'",
+                table_name
+            ))),
+        }
+    }
+
     /// Optimize the logical plan by applying optimizer rules
-    fn optimize(&self, plan: &LogicalPlan) -> Result<Arc<LogicalPlan>> {
+    pub fn optimize(&self, plan: &LogicalPlan) -> Result<Arc<LogicalPlan>> {
         let rules: Vec<Box<OptimizerRule>> = vec![
             Box::new(ProjectionPushDown::new()),
             Box::new(TypeCoercionRule::new()),
@@ -131,7 +208,7 @@ impl ExecutionContext {
                 ref table_name,
                 ref projection,
                 ..
-            } => match self.datasources.borrow().get(table_name) {
+            } => match (*self.datasources).borrow().get(table_name) {
                 Some(provider) => {
                     let ds = provider.scan(projection, batch_size)?;
                     if ds.len() == 1 {
@@ -155,12 +232,8 @@ impl ExecutionContext {
             } => {
                 let input_rel = self.execute(input, batch_size)?;
                 let input_schema = input_rel.as_ref().borrow().schema().clone();
-                let runtime_expr = compile_scalar_expr(&self, expr, &input_schema)?;
-                let rel = FilterRelation::new(
-                    input_rel,
-                    runtime_expr, /* .get_func()?.clone() */
-                    input_schema,
-                );
+                let runtime_expr = compile_expr(&self, expr, &input_schema)?;
+                let rel = FilterRelation::new(input_rel, runtime_expr, input_schema);
                 Ok(Rc::new(RefCell::new(rel)))
             }
             LogicalPlan::Projection {
@@ -177,9 +250,9 @@ impl ExecutionContext {
 
                 let project_schema = Arc::new(Schema::new(project_columns));
 
-                let compiled_expr: Result<Vec<RuntimeExpr>> = expr
+                let compiled_expr: Result<Vec<CompiledExpr>> = expr
                     .iter()
-                    .map(|e| compile_scalar_expr(&self, e, &input_schema))
+                    .map(|e| compile_expr(&self, e, &input_schema))
                     .collect();
 
                 let rel = ProjectRelation::new(input_rel, compiled_expr?, project_schema);
@@ -196,16 +269,17 @@ impl ExecutionContext {
 
                 let input_schema = input_rel.as_ref().borrow().schema().clone();
 
-                let compiled_group_expr_result: Result<Vec<RuntimeExpr>> = group_expr
-                    .iter()
-                    .map(|e| compile_scalar_expr(&self, e, &input_schema))
-                    .collect();
-                let compiled_group_expr = compiled_group_expr_result?;
-
-                let compiled_aggr_expr_result: Result<Vec<RuntimeExpr>> = aggr_expr
+                let compiled_group_expr_result: Result<Vec<CompiledExpr>> = group_expr
                     .iter()
                     .map(|e| compile_expr(&self, e, &input_schema))
                     .collect();
+                let compiled_group_expr = compiled_group_expr_result?;
+
+                let compiled_aggr_expr_result: Result<Vec<CompiledAggregateExpression>> =
+                    aggr_expr
+                        .iter()
+                        .map(|e| compile_aggregate_expr(&self, e, &input_schema))
+                        .collect();
                 let compiled_aggr_expr = compiled_aggr_expr_result?;
 
                 let mut output_fields: Vec<Field> = vec![];
@@ -260,6 +334,38 @@ impl ExecutionContext {
                 }
             }
 
+            LogicalPlan::CreateExternalTable {
+                ref schema,
+                ref name,
+                ref location,
+                ref file_type,
+                ref header_row,
+            } => {
+                match file_type {
+                    FileType::CSV => {
+                        self.register_csv(name, location, schema, *header_row)
+                    }
+                    _ => {
+                        return Err(ExecutionError::ExecutionError(format!(
+                            "Unsupported file type {:?}.",
+                            file_type
+                        )));
+                    }
+                }
+                let mut builder = BooleanBuilder::new(1);
+                builder.append_value(true)?;
+
+                let columns = vec![Arc::new(builder.finish()) as ArrayRef];
+                Ok(Rc::new(RefCell::new(ScalarRelation::new(
+                    Arc::new(Schema::new(vec![Field::new(
+                        "result",
+                        DataType::Boolean,
+                        false,
+                    )])),
+                    columns,
+                ))))
+            }
+
             _ => Err(ExecutionError::NotImplemented(
                 "Unsupported logical plan for execution".to_string(),
             )),
@@ -268,11 +374,11 @@ impl ExecutionContext {
 }
 
 struct ExecutionContextSchemaProvider {
-    datasources: Rc<RefCell<HashMap<String, Rc<Table>>>>,
+    datasources: Rc<RefCell<HashMap<String, Rc<TableProvider>>>>,
 }
 impl SchemaProvider for ExecutionContextSchemaProvider {
     fn get_table_meta(&self, name: &str) -> Option<Arc<Schema>> {
-        match self.datasources.borrow().get(name) {
+        match (*self.datasources).borrow().get(name) {
             Some(ds) => Some(ds.schema().clone()),
             None => None,
         }

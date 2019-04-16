@@ -407,11 +407,15 @@ cdef extern from "arrow/api.h" namespace "arrow" nogil:
         @staticmethod
         CStatus MakeSparse(const CArray& type_ids,
                            const vector[shared_ptr[CArray]]& children,
+                           const vector[c_string]& field_names,
+                           const vector[uint8_t]& type_codes,
                            shared_ptr[CArray]* out)
 
         @staticmethod
         CStatus MakeDense(const CArray& type_ids, const CArray& value_offsets,
                           const vector[shared_ptr[CArray]]& children,
+                          const vector[c_string]& field_names,
+                          const vector[uint8_t]& type_codes,
                           shared_ptr[CArray]* out)
         uint8_t* raw_type_ids()
         int32_t value_offset(int i)
@@ -567,6 +571,39 @@ cdef extern from "arrow/api.h" namespace "arrow" nogil:
         c_bool is_contiguous()
         Type type_id()
         c_bool Equals(const CTensor& other)
+
+    cdef cppclass CScalar" arrow::Scalar":
+        shared_ptr[CDataType] type
+
+    cdef cppclass CInt8Scalar" arrow::Int8Scalar"(CScalar):
+        int8_t value
+
+    cdef cppclass CUInt8Scalar" arrow::UInt8Scalar"(CScalar):
+        uint8_t value
+
+    cdef cppclass CInt16Scalar" arrow::Int16Scalar"(CScalar):
+        int16_t value
+
+    cdef cppclass CUInt16Scalar" arrow::UInt16Scalar"(CScalar):
+        uint16_t value
+
+    cdef cppclass CInt32Scalar" arrow::Int32Scalar"(CScalar):
+        int32_t value
+
+    cdef cppclass CUInt32Scalar" arrow::UInt32Scalar"(CScalar):
+        uint32_t value
+
+    cdef cppclass CInt64Scalar" arrow::Int64Scalar"(CScalar):
+        int64_t value
+
+    cdef cppclass CUInt64Scalar" arrow::UInt64Scalar"(CScalar):
+        uint64_t value
+
+    cdef cppclass CFloatScalar" arrow::FloatScalar"(CScalar):
+        float value
+
+    cdef cppclass CDoubleScalar" arrow::DoubleScalar"(CScalar):
+        double value
 
     CStatus ConcatenateTables(const vector[shared_ptr[CTable]]& tables,
                               shared_ptr[CTable]* result)
@@ -975,6 +1012,8 @@ cdef extern from "arrow/csv/api.h" namespace "arrow::csv" nogil:
         c_bool check_utf8
         unordered_map[c_string, shared_ptr[CDataType]] column_types
         vector[c_string] null_values
+        vector[c_string] true_values
+        vector[c_string] false_values
 
         @staticmethod
         CCSVConvertOptions Defaults()
@@ -1030,6 +1069,7 @@ cdef extern from "arrow/compute/api.h" namespace "arrow::compute" nogil:
 
         shared_ptr[CArrayData] array()
         shared_ptr[CChunkedArray] chunked_array()
+        shared_ptr[CScalar] scalar()
 
     CStatus Cast(CFunctionContext* context, const CArray& array,
                  const shared_ptr[CDataType]& to_type,
@@ -1045,6 +1085,8 @@ cdef extern from "arrow/compute/api.h" namespace "arrow::compute" nogil:
 
     CStatus DictionaryEncode(CFunctionContext* context, const CDatum& value,
                              CDatum* out)
+
+    CStatus Sum(CFunctionContext* context, const CDatum& value, CDatum* out)
 
 
 cdef extern from "arrow/python/api.h" namespace "arrow::py" nogil:

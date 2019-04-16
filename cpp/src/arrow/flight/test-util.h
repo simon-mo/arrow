@@ -18,10 +18,14 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #include "arrow/status.h"
 
+#include "arrow/flight/client_auth.h"
+#include "arrow/flight/server_auth.h"
 #include "arrow/flight/types.h"
 
 namespace boost {
@@ -57,6 +61,21 @@ class ARROW_EXPORT TestServer {
   std::shared_ptr<::boost::process::child> server_process_;
 };
 
+class ARROW_EXPORT InProcessTestServer {
+ public:
+  explicit InProcessTestServer(std::unique_ptr<FlightServerBase> server, int port)
+      : server_(std::move(server)), port_(port), thread_() {}
+  ~InProcessTestServer();
+  Status Start(std::unique_ptr<ServerAuthHandler> auth_handler);
+  void Stop();
+  int port() const;
+
+ private:
+  std::unique_ptr<FlightServerBase> server_;
+  int port_;
+  std::thread thread_;
+};
+
 // ----------------------------------------------------------------------
 // A RecordBatchReader for serving a sequence of in-memory record batches
 
@@ -88,31 +107,58 @@ class BatchIterator : public RecordBatchReader {
 
 using BatchVector = std::vector<std::shared_ptr<RecordBatch>>;
 
-inline std::shared_ptr<Schema> ExampleSchema1() {
-  auto f0 = field("f0", int32());
-  auto f1 = field("f1", int32());
-  return ::arrow::schema({f0, f1});
-}
+ARROW_EXPORT std::shared_ptr<Schema> ExampleIntSchema();
 
-inline std::shared_ptr<Schema> ExampleSchema2() {
-  auto f0 = field("f0", utf8());
-  auto f1 = field("f1", binary());
-  return ::arrow::schema({f0, f1});
-}
+ARROW_EXPORT std::shared_ptr<Schema> ExampleStringSchema();
+
+ARROW_EXPORT std::shared_ptr<Schema> ExampleDictSchema();
+
+ARROW_EXPORT
+Status ExampleIntBatches(BatchVector* out);
+
+ARROW_EXPORT
+Status ExampleDictBatches(BatchVector* out);
+
+ARROW_EXPORT
+std::vector<FlightInfo> ExampleFlightInfo();
+
+ARROW_EXPORT
+std::vector<ActionType> ExampleActionTypes();
 
 ARROW_EXPORT
 Status MakeFlightInfo(const Schema& schema, const FlightDescriptor& descriptor,
                       const std::vector<FlightEndpoint>& endpoints, int64_t total_records,
                       int64_t total_bytes, FlightInfo::Data* out);
 
-ARROW_EXPORT
-std::vector<FlightInfo> ExampleFlightInfo();
+// ----------------------------------------------------------------------
+// A pair of authentication handlers that check for a predefined password
+// and set the peer identity to a predefined username.
 
-ARROW_EXPORT
-Status SimpleIntegerBatches(const int num_batches, BatchVector* out);
+class ARROW_EXPORT TestServerAuthHandler : public ServerAuthHandler {
+ public:
+  explicit TestServerAuthHandler(const std::string& username,
+                                 const std::string& password);
+  ~TestServerAuthHandler();
+  Status Authenticate(ServerAuthSender* outgoing, ServerAuthReader* incoming) override;
+  Status IsValid(const std::string& token, std::string* peer_identity) override;
 
-ARROW_EXPORT
-std::vector<ActionType> ExampleActionTypes();
+ private:
+  std::string username_;
+  std::string password_;
+};
+
+class ARROW_EXPORT TestClientAuthHandler : public ClientAuthHandler {
+ public:
+  explicit TestClientAuthHandler(const std::string& username,
+                                 const std::string& password);
+  ~TestClientAuthHandler();
+  Status Authenticate(ClientAuthSender* outgoing, ClientAuthReader* incoming) override;
+  Status GetToken(std::string* token) override;
+
+ private:
+  std::string username_;
+  std::string password_;
+};
 
 }  // namespace flight
 }  // namespace arrow

@@ -27,7 +27,7 @@ use arrow::array::*;
 use arrow::datatypes::{DataType, Field, Schema};
 
 use datafusion::datasource::parquet::ParquetTable;
-use datafusion::datasource::Table;
+use datafusion::datasource::TableProvider;
 use datafusion::execution::context::ExecutionContext;
 use datafusion::execution::relation::Relation;
 
@@ -43,6 +43,16 @@ fn parquet_query() {
     let sql = "SELECT id, string_col FROM alltypes_plain";
     let actual = execute(&mut ctx, sql);
     let expected = "4\t\"0\"\n5\t\"1\"\n6\t\"0\"\n7\t\"1\"\n2\t\"0\"\n3\t\"1\"\n0\t\"0\"\n1\t\"1\"\n".to_string();
+    assert_eq!(expected, actual);
+}
+
+#[test]
+fn csv_count_star() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv(&mut ctx);
+    let sql = "SELECT COUNT(*), COUNT(1), COUNT(c1) FROM aggregate_test_100";
+    let actual = execute(&mut ctx, sql);
+    let expected = "100\t100\t100\n".to_string();
     assert_eq!(expected, actual);
 }
 
@@ -68,6 +78,98 @@ fn csv_query_group_by_int_min_max() {
 }
 
 #[test]
+fn csv_query_avg() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv(&mut ctx);
+    //TODO add ORDER BY once supported, to make this test determistic
+    let sql = "SELECT avg(c12) FROM aggregate_test_100";
+    let actual = execute(&mut ctx, sql);
+    let expected = "0.5089725099127211\n".to_string();
+    assert_eq!(expected, actual);
+}
+
+#[test]
+fn csv_query_group_by_avg() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv(&mut ctx);
+    //TODO add ORDER BY once supported, to make this test determistic
+    let sql = "SELECT c1, avg(c12) FROM aggregate_test_100 GROUP BY c1";
+    let actual = execute(&mut ctx, sql);
+    let expected = "\"d\"\t0.48855379387549824\n\"c\"\t0.6600456536439784\n\"b\"\t0.41040709263815384\n\"a\"\t0.48754517466109415\n\"e\"\t0.48600669271341534\n".to_string();
+    assert_eq!(expected, actual);
+}
+
+#[test]
+fn csv_query_avg_multi_batch() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv(&mut ctx);
+    //TODO add ORDER BY once supported, to make this test determistic
+    let sql = "SELECT avg(c12) FROM aggregate_test_100";
+    let plan = ctx.create_logical_plan(&sql).unwrap();
+    let results = ctx.execute(&plan, 4).unwrap();
+    let mut relation = results.borrow_mut();
+    let batch = relation.next().unwrap().unwrap();
+    let column = batch.column(0);
+    let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
+    let actual = array.value(0);
+    let expected = 0.5089725;
+    // Due to float number's accuracy, different batch size will lead to different answers.
+    assert!((expected - actual).abs() < 0.01);
+}
+
+#[test]
+fn csv_query_group_by_avg_multi_batch() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv(&mut ctx);
+    //TODO add ORDER BY once supported, to make this test determistic
+    let sql = "SELECT c1, avg(c12) FROM aggregate_test_100 GROUP BY c1";
+    let plan = ctx.create_logical_plan(&sql).unwrap();
+    let results = ctx.execute(&plan, 4).unwrap();
+    let mut relation = results.borrow_mut();
+    let mut actual_vec = Vec::new();
+    while let Some(batch) = relation.next().unwrap() {
+        let column = batch.column(1);
+        let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
+
+        for row_index in 0..batch.num_rows() {
+            actual_vec.push(array.value(row_index));
+        }
+    }
+
+    let expect_vec = vec![0.48855379, 0.66004565, 0.41040709, 0.48754517];
+
+    actual_vec
+        .iter()
+        .zip(expect_vec.iter())
+        .for_each(|(actual, expect)| {
+            // Due to float number's accuracy, different batch size will lead to different answers.
+            assert!((expect - actual).abs() < 0.01);
+        });
+}
+
+#[test]
+fn csv_query_count() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv(&mut ctx);
+    //TODO add ORDER BY once supported, to make this test determistic
+    let sql = "SELECT count(c12) FROM aggregate_test_100";
+    let actual = execute(&mut ctx, sql);
+    let expected = "100\n".to_string();
+    assert_eq!(expected, actual);
+}
+
+#[test]
+fn csv_query_group_by_int_count() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv(&mut ctx);
+    //TODO add ORDER BY once supported, to make this test determistic
+    let sql = "SELECT count(c12) FROM aggregate_test_100 GROUP BY c1";
+    let actual = execute(&mut ctx, sql);
+    let expected = "\"d\"\t18\n\"c\"\t21\n\"b\"\t19\n\"a\"\t21\n\"e\"\t21\n".to_string();
+    assert_eq!(expected, actual);
+}
+
+#[test]
 fn csv_query_group_by_string_min_max() {
     let mut ctx = ExecutionContext::new();
     register_aggregate_csv(&mut ctx);
@@ -86,6 +188,16 @@ fn csv_query_cast() {
     let sql = "SELECT CAST(c12 AS float) FROM aggregate_test_100 WHERE c12 > 0.376 AND c12 < 0.4";
     let actual = execute(&mut ctx, sql);
     let expected = "0.39144436569161134\n0.38870280983958583\n".to_string();
+    assert_eq!(expected, actual);
+}
+
+#[test]
+fn csv_query_cast_literal() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv(&mut ctx);
+    let sql = "SELECT c12, CAST(1 AS float) FROM aggregate_test_100 WHERE c12 > CAST(0 AS float) LIMIT 2";
+    let actual = execute(&mut ctx, sql);
+    let expected = "0.9294097332465232\t1.0\n0.3114712539863804\t1.0\n".to_string();
     assert_eq!(expected, actual);
 }
 
@@ -129,7 +241,28 @@ fn csv_query_limit_zero() {
     assert_eq!(expected, actual);
 }
 
-//TODO Uncomment the following test when ORDER BY is implemented to be able to test ORDER BY + LIMIT
+#[test]
+fn csv_query_create_external_table() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv_by_sql(&mut ctx);
+    let sql = "SELECT c1, c2, c3, c4, c5, c6, c7, c8, c9, 10, c11, c12, c13 FROM aggregate_test_100 LIMIT 1";
+    let actual = execute(&mut ctx, sql);
+    let expected = "\"c\"\t2\t1\t18109\t2033001162\t-6513304855495910254\t25\t43062\t1491205016\t10\t0.110830784\t0.9294097332465232\t\"6WfVFBVGJSQb7FhA7E0lBwdvjfZnSW\"\n".to_string();
+    assert_eq!(expected, actual);
+}
+
+#[test]
+fn csv_query_external_table_count() {
+    let mut ctx = ExecutionContext::new();
+    register_aggregate_csv_by_sql(&mut ctx);
+    let sql = "SELECT COUNT(c12) FROM aggregate_test_100";
+    let actual = execute(&mut ctx, sql);
+    let expected = "100\n".to_string();
+    assert_eq!(expected, actual);
+}
+
+//TODO Uncomment the following test when ORDER BY is implemented to be able to test ORDER
+// BY + LIMIT
 /*
 #[test]
 fn csv_query_limit_with_order_by() {
@@ -160,12 +293,46 @@ fn aggr_test_schema() -> Arc<Schema> {
     ]))
 }
 
+fn register_aggregate_csv_by_sql(ctx: &mut ExecutionContext) {
+    let testdata = env::var("ARROW_TEST_DATA").expect("ARROW_TEST_DATA not defined");
+
+    // TODO: The following c9 should be migrated to UInt32 and c10 should be UInt64 once unsigned is supported.
+    ctx.sql(
+        &format!(
+            "
+    CREATE EXTERNAL TABLE aggregate_test_100 (
+        c1  VARCHAR NOT NULL,
+        c2  INT NOT NULL,
+        c3  SMALLINT NOT NULL,
+        c4  SMALLINT NOT NULL,
+        c5  INT NOT NULL,
+        c6  BIGINT NOT NULL,
+        c7  SMALLINT NOT NULL,
+        c8  INT NOT NULL,
+        c9  BIGINT NOT NULL,
+        c10 VARCHAR NOT NULL,
+        c11 FLOAT NOT NULL,
+        c12 DOUBLE NOT NULL,
+        c13 VARCHAR NOT NULL
+    )
+    STORED AS CSV
+    WITH HEADER ROW
+    LOCATION '{}/csv/aggregate_test_100.csv'
+    ",
+            testdata
+        ),
+        1024,
+    )
+    .unwrap();
+}
+
 fn register_aggregate_csv(ctx: &mut ExecutionContext) {
+    let testdata = env::var("ARROW_TEST_DATA").expect("ARROW_TEST_DATA not defined");
     let schema = aggr_test_schema();
     register_csv(
         ctx,
         "aggregate_test_100",
-        "../../testing/data/csv/aggregate_test_100.csv",
+        &format!("{}/csv/aggregate_test_100.csv", testdata),
         &schema,
     );
 }
@@ -179,8 +346,8 @@ fn register_csv(
     ctx.register_csv(name, filename, &schema, true);
 }
 
-fn load_parquet_table(name: &str) -> Rc<Table> {
-    let testdata = env::var("PARQUET_TEST_DATA").unwrap();
+fn load_parquet_table(name: &str) -> Rc<TableProvider> {
+    let testdata = env::var("PARQUET_TEST_DATA").expect("PARQUET_TEST_DATA not defined");
     let filename = format!("{}/{}", testdata, name);
     let table = ParquetTable::try_new(&filename).unwrap();
     Rc::new(table)

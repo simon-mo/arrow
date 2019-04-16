@@ -31,13 +31,20 @@ macro_rules! parser_err {
     };
 }
 
-#[derive(Debug, Clone)]
+/// Types of files to parse as DataFrames
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum FileType {
+    /// Newline-delimited JSON
     NdJson,
+    /// Apache Parquet columnar storage
     Parquet,
+    /// Comma separated values
     CSV,
 }
 
+/// DataFrame AST Node representations.
+///
+/// Tokens parsed by `DFParser` are converted into these values.
 #[derive(Debug, Clone)]
 pub enum DFASTNode {
     /// ANSI SQL AST node
@@ -127,18 +134,16 @@ impl DFParser {
                                         true
                                     };
 
-                                    match self.parser.peek_token() {
-                                        Some(Token::Comma) => {
-                                            self.parser.next_token();
-                                            columns.push(SQLColumnDef {
-                                                name: column_name,
-                                                data_type: data_type,
-                                                allow_null,
-                                                default: None,
-                                                is_primary: false,
-                                                is_unique: false,
-                                            });
-                                        }
+                                    columns.push(SQLColumnDef {
+                                        name: column_name,
+                                        data_type: data_type,
+                                        allow_null,
+                                        default: None,
+                                        is_primary: false,
+                                        is_unique: false,
+                                    });
+                                    match self.parser.next_token() {
+                                        Some(Token::Comma) => continue,
                                         Some(Token::RParen) => break,
                                         _ => {
                                             return parser_err!(
@@ -210,6 +215,7 @@ impl DFParser {
         }
     }
 
+    /// Parse an infix operator
     pub fn parse_infix(
         &mut self,
         _expr: DFASTNode,

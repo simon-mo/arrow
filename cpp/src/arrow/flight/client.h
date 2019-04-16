@@ -39,6 +39,8 @@ class Schema;
 
 namespace flight {
 
+class ClientAuthHandler;
+
 /// \brief Client class for Arrow Flight RPC services (gRPC-based).
 /// API experimental for now
 class ARROW_EXPORT FlightClient {
@@ -53,6 +55,10 @@ class ARROW_EXPORT FlightClient {
   /// successful
   static Status Connect(const std::string& host, int port,
                         std::unique_ptr<FlightClient>* client);
+
+  /// \brief Authenticate to the server using the given handler.
+  /// \return Status OK if the client authenticated successfully
+  Status Authenticate(std::unique_ptr<ClientAuthHandler> auth_handler);
 
   /// \brief Perform the indicated action, returning an iterator to the stream
   /// of results, if any
@@ -107,23 +113,6 @@ class ARROW_EXPORT FlightClient {
   FlightClient();
   class FlightClientImpl;
   std::unique_ptr<FlightClientImpl> impl_;
-};
-
-/// \brief An interface to upload record batches to a Flight server
-class ARROW_EXPORT FlightPutWriter : public ipc::RecordBatchWriter {
- public:
-  ~FlightPutWriter() override;
-
-  Status WriteRecordBatch(const RecordBatch& batch, bool allow_64bit = false) override;
-  Status Close() override;
-  void set_memory_pool(MemoryPool* pool) override;
-
- private:
-  class FlightPutWriterImpl;
-  explicit FlightPutWriter(std::unique_ptr<FlightPutWriterImpl> impl);
-  std::unique_ptr<FlightPutWriterImpl> impl_;
-
-  friend class FlightClient;
 };
 
 }  // namespace flight
