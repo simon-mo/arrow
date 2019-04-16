@@ -29,6 +29,7 @@ void dlfree(void* mem);
 
 int64_t PlasmaAllocator::footprint_limit_ = 0;
 int64_t PlasmaAllocator::allocated_ = 0;
+float PlasmaAllocator::eviction_fraction_ = 0.2;
 
 void* PlasmaAllocator::Memalign(size_t alignment, size_t bytes) {
   if (allocated_ + static_cast<int64_t>(bytes) > footprint_limit_) {
